@@ -280,5 +280,5 @@ if __name__ == "__main__":
         return [[k, str(w)] for k, w in config.items()]
     config.as_matrix = as_matrix
 
-    #main(config=config,**config)
-    test(MODEL='models/cifar10/last.ckpt',**config)
+    main(config=config,**config)
+    #test(MODEL='models/cifar10/last.ckpt',**config)

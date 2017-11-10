@@ -14,7 +14,7 @@ This repository implements the paper, [Neural Discrete Representation Learning](
 
 ## Results
 
-  All training is done with Quadro M4000 GPU. Training MNIST only takes less than 10 mniutes.
+  All training is done with Quadro M4000 GPU. Training MNIST only takes less than 10 minutes.
 
 - [x] MNIST
 
@@ -22,7 +22,7 @@ This repository implements the paper, [Neural Discrete Representation Learning](
   | ------------- |:-------------:|
   |![MNIST original images](/assets/mnist_test_original.png) | ![MNIST Reconstructed Images](/assets/mnist_test_recon.png) |
 
-  The result on MNIST test dataset.
+  The result on MNIST test dataset. (K=20, D=64, latent space=3 by 3)
 
   I also observed its latent space by changing single value for each latent space from one of the observed latent code. The result is shown below.
   ![MNIST Latent Observation](/assets/mnist_diff_codes.png)
@@ -36,13 +36,13 @@ This repository implements the paper, [Neural Discrete Representation Learning](
   | ------------- |:-------------:|
   |![MNIST original images](/assets/cifar10_test_original.png) | ![MNIST Reconstructed Images](/assets/cifar10_test_recon.png) |
 
-  I was able to get 4.65 bits/dims.
+  I was able to get 4.65 bits/dims. (K=10, D=256, latent space=8 by 8)
 
 
 ## Training
 
 It will download required datasets on the directory `./datasets/{mnist,cifar10}` by itself.
-Hence, just run the code will do the trick. (You might need to make a directory. `mkdir datasets`)
+Hence, just run the code will do the trick.
 
 ### Run train
 

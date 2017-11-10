@@ -1,3 +1,4 @@
+from __future__ import print_function
 from six.moves import xrange
 import os
 import better_exceptions
@@ -279,5 +280,5 @@ if __name__ == "__main__":
         return [[k, str(w)] for k, w in config.items()]
     config.as_matrix = as_matrix
 
-    main(config=config,**config)
-    #test(MODEL='/home/nine/workspace/ndr/log/cifar10/2017-11-08 22:28:50/model.ckpt-150000',**config)
+    #main(config=config,**config)
+    test(MODEL='models/cifar10/last.ckpt',**config)

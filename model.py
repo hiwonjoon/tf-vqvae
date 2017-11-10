@@ -78,15 +78,15 @@ class VQVAE():
 
             # Middle Area (Compression or Discretize)
             # TODO: Gross.. use brodcast instead!
-            _t = tf.tile(tf.expand_dims(z_e,-2),[1,1,1,K,1]) #[batch,4,4,d] -> [batch,4,4,k,d]
+            _t = tf.tile(tf.expand_dims(z_e,-2),[1,1,1,K,1]) #[batch,latent_h,latent_w,K,D]
             _e = tf.reshape(embeds,[1,1,1,K,D])
             _t = tf.norm(_t-_e,axis=-1)
-            k = tf.argmin(_t,axis=-1) # -> [4,4]
+            k = tf.argmin(_t,axis=-1) # -> [latent_h,latent_w]
             z_q = tf.gather(embeds,k)
 
-            self.z_e = z_e # -> [batch,4,4,d]
+            self.z_e = z_e # -> [batch,latent_h,latent_w,D]
             self.k = k
-            self.z_q = z_q # -> [batch,4,4,d]
+            self.z_q = z_q # -> [batch,latent_h,latent_w,D]
 
             # Decoder Pass
             _t = z_q
@@ -105,6 +105,9 @@ class VQVAE():
             self.loss = self.recon + self.vq + beta * self.commit
 
             # NLL
+            # TODO: is it correct impl?
+            # it seems tf.reduce_prod(tf.shape(self.z_q)[1:2]) should be multipled
+            # in front of log(1/K) if we assume uniform prior on z.
             self.nll = -1.*(tf.reduce_mean(tf.log(self.p_x_z),axis=[1,2,3]) + tf.log(1/tf.cast(K,tf.float32)))/tf.log(2.)
 
         if( is_training ):
@@ -122,6 +125,13 @@ class VQVAE():
 
                 optimizer = tf.train.AdamOptimizer(lr)
                 self.train_op= optimizer.apply_gradients(decoder_grads+encoder_grads+embed_grads,global_step=global_step)
+        else :
+            # Another decoder pass that we can play with!
+            self.latent = tf.placeholder(tf.int64,[None,3,3])
+            _t = tf.gather(embeds,self.latent)
+            for block in dec_spec:
+                _t = block(_t)
+            self.gen = _t
 
         save_vars = {('train/'+'/'.join(var.name.split('/')[1:])).split(':')[0] : var for var in
                      tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES,param_scope.name) }

@@ -28,7 +28,13 @@ This repository implements the paper, [Neural Discrete Representation Learning](
   ![MNIST Latent Observation](/assets/mnist_diff_codes.png)
 
   It seems that spatial location of latent code is improtant. By changing latent code on a specific location, the pixel matches with the location is disturbed.
-  If you want to further explore latent space, then try to play with notebook files I provided.
+
+  ![MNIST Latent Observation - Random Walk](/assets/mnist_randomwalk.gif)
+
+  This results shows the 1000 generated images starting from knwon latent codes and changing aa single latent code at radnom location by +1 or -1.
+  Most of the images are redundant (unrealistic), so it indicates that there are much room for compression.
+
+  If you want to further explore the latent space, then try to play with notebook files I provided.
 
 - [x] CIFAR 10
 

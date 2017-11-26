@@ -51,9 +51,43 @@ def _cifar10_arch(d):
             partial(_residual,
                     conv3=Conv2d('res_2_3',d,d,3,3,1,1,data_format='NHWC'),
                     conv1=Conv2d('res_2_1',d,d,1,1,1,1,data_format='NHWC')),
-            TransposedConv2d('tconv2d_1',256,256,data_format='NHWC'),
+            TransposedConv2d('tconv2d_1',d,d,data_format='NHWC'),
             lambda t,**kwargs : tf.nn.relu(t),
-            TransposedConv2d('tconv2d_2',256,3,data_format='NHWC'),
+            TransposedConv2d('tconv2d_2',d,3,data_format='NHWC'),
+            lambda t,**kwargs : tf.nn.sigmoid(t),
+        ]
+    return enc_spec,enc_param_scope,dec_spec,dec_param_scope
+
+def _imagenet_arch(d,num_residual=4):
+    def _residual(t,conv3,conv1):
+        return conv1(tf.nn.relu(conv3(tf.nn.relu(t))))+t
+    from functools import partial
+
+    with tf.variable_scope('enc') as enc_param_scope :
+        enc_spec = [
+            Conv2d('conv2d_1',3,d//2,data_format='NHWC'),
+            lambda t,**kwargs : tf.nn.relu(t),
+            Conv2d('conv2d_2',d//2,d,data_format='NHWC'),
+            lambda t,**kwargs : tf.nn.relu(t),
+        ]
+        enc_spec += [
+            partial(_residual,
+                    conv3=Conv2d('res_%d_3'%i,d,d,3,3,1,1,data_format='NHWC'),
+                    conv1=Conv2d('res_%d_1'%i,d,d,1,1,1,1,data_format='NHWC'))
+            for i in range(num_residual)
+        ]
+    with tf.variable_scope('dec') as dec_param_scope :
+        dec_spec = [
+            partial(_residual,
+                    conv3=Conv2d('res_%d_3'%i,d,d,3,3,1,1,data_format='NHWC'),
+                    conv1=Conv2d('res_%d_1'%i,d,d,1,1,1,1,data_format='NHWC'))
+            for i in range(num_residual)
+        ]
+        dec_spec += [
+            lambda t,**kwargs : tf.nn.relu(t),
+            TransposedConv2d('tconv2d_1',d,d//2,data_format='NHWC'),
+            lambda t,**kwargs : tf.nn.relu(t),
+            TransposedConv2d('tconv2d_2',d//2,3,data_format='NHWC'),
             lambda t,**kwargs : tf.nn.sigmoid(t),
         ]
     return enc_spec,enc_param_scope,dec_spec,dec_param_scope
@@ -68,6 +102,7 @@ class VQVAE():
             with tf.variable_scope('embed') :
                 embeds = tf.get_variable('embed', [K,D],
                                         initializer=tf.truncated_normal_initializer(stddev=0.02))
+                self.embeds = embeds
 
         with tf.variable_scope('forward') as forward_scope:
             # Encoder Pass
@@ -127,7 +162,8 @@ class VQVAE():
                 self.train_op= optimizer.apply_gradients(decoder_grads+encoder_grads+embed_grads,global_step=global_step)
         else :
             # Another decoder pass that we can play with!
-            self.latent = tf.placeholder(tf.int64,[None,3,3])
+            size = self.z_e.get_shape()[1]
+            self.latent = tf.placeholder(tf.int64,[None,size,size])
             _t = tf.gather(embeds,self.latent)
             for block in dec_spec:
                 _t = block(_t)
@@ -149,6 +185,106 @@ class VQVAE():
     def load(self,sess,model):
         self.saver.restore(sess,model)
 
+class PixelCNN(object):
+    def __init__(self,lr,global_step,grad_clip,
+                 size, embeds, K, D,
+                 num_classes, num_layers, num_maps,
+                 is_training=True):
+        import sys
+        sys.path.append('pixelcnn')
+        from layers import GatedCNN
+        self.X = tf.placeholder(tf.int32,[None,size,size])
+
+        if( num_classes is not None ):
+            self.h = tf.placeholder(tf.int32,[None,])
+            onehot_h = tf.one_hot(self.h,num_classes,axis=-1)
+        else:
+            onehot_h = None
+
+        if( embeds is not None ):
+            X_processed = tf.gather(tf.stop_gradient(embeds),self.X)
+        else:
+            embeds = tf.get_variable('embed', [K,D],
+                                    initializer=tf.truncated_normal_initializer(stddev=0.02))
+            X_processed = tf.gather(embeds,self.X)
+
+        v_stack_in, h_stack_in = X_processed, X_processed
+        for i in range(num_layers):
+            filter_size = 3 if i > 0 else 7
+            mask = 'b' if i > 0 else 'a'
+            residual = True if i > 0 else False
+            i = str(i)
+            with tf.variable_scope("v_stack"+i):
+                v_stack = GatedCNN([filter_size, filter_size, num_maps], v_stack_in, mask=mask, conditional=onehot_h).output()
+                v_stack_in = v_stack
+
+            with tf.variable_scope("v_stack_1"+i):
+                v_stack_1 = GatedCNN([1, 1, num_maps], v_stack_in, gated=False, mask=mask).output()
+
+            with tf.variable_scope("h_stack"+i):
+                h_stack = GatedCNN([1, filter_size, num_maps], h_stack_in, payload=v_stack_1, mask=mask, conditional=onehot_h).output()
+
+            with tf.variable_scope("h_stack_1"+i):
+                h_stack_1 = GatedCNN([1, 1, num_maps], h_stack, gated=False, mask=mask).output()
+                if residual:
+                    h_stack_1 += h_stack_in # Residual connection
+                h_stack_in = h_stack_1
+
+        with tf.variable_scope("fc_1"):
+            fc1 = GatedCNN([1, 1, num_maps], h_stack_in, gated=False, mask='b').output()
+
+        with tf.variable_scope("fc_2"):
+            self.fc2 = GatedCNN([1, 1, K], fc1, gated=False, mask='b', activation=False).output()
+            self.dist = tf.distributions.Categorical(logits=self.fc2)
+            self.sampled = self.dist.sample()
+            self.log_prob = self.dist.log_prob(self.sampled)
+
+        loss_per_batch = tf.reduce_sum(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.fc2,
+                                                                                      labels=self.X),axis=[1,2])
+        self.loss = tf.reduce_mean(loss_per_batch,axis=0)
+
+        save_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,tf.contrib.framework.get_name_scope())
+        self.saver = tf.train.Saver(var_list=save_vars,max_to_keep = 3)
+
+        if( is_training ):
+            with tf.variable_scope('backward'):
+                optimizer = tf.train.AdamOptimizer(lr)
+
+                gradients = optimizer.compute_gradients(self.loss,var_list=save_vars)
+                if( grad_clip is None ):
+                    clipped_gradients = gradients
+                else :
+                    clipped_gradients = [(tf.clip_by_value(_[0], -grad_clip, grad_clip), _[1]) for _ in gradients]
+                    #clipped_gradients = [(tf.clip_by_average_norm(_[0], grad_clip), _[1]) for _ in gradients]
+                self.train_op = optimizer.apply_gradients(clipped_gradients,global_step)
+        #for var in save_vars:
+        #    print(var,var.name)
+
+    def sample_from_prior(self,sess,classes,batch_size):
+        # Generates len(classes)*batch_size Z samples.
+        size = self.X.get_shape()[1]
+        feed_dict={
+            self.X: np.zeros([len(classes)*batch_size,size,size],np.int32)
+        }
+        if( classes is not None ):
+            feed_dict[self.h] = np.repeat(classes,batch_size).astype(np.int32)
+
+        log_probs = np.zeros((len(classes)*batch_size,))
+        for i in xrange(size):
+            for j in xrange(size):
+                sampled,log_prob = sess.run([self.sampled,self.log_prob],feed_dict=feed_dict)
+                feed_dict[self.X][:,i,j]= sampled[:,i,j]
+                log_probs += log_prob[:,i,j]
+        return feed_dict[self.X], log_probs
+
+    def save(self,sess,dir,step=None):
+        if(step is not None):
+            self.saver.save(sess,dir+'/model-pixelcnn.ckpt',global_step=step)
+        else :
+            self.saver.save(sess,dir+'/last-pixelcnn.ckpt')
+
+    def load(self,sess,model):
+        self.saver.restore(sess,model)
 
 if __name__ == "__main__":
     with tf.variable_scope('params') as params:
@@ -159,6 +295,14 @@ if __name__ == "__main__":
 
     net = VQVAE(0.1,global_step,0.1,x,20,256,_cifar10_arch,params,True)
 
+    with tf.variable_scope('pixelcnn'):
+        latent = tf.placeholder(tf.int32,[None,3,3])
+        embeds = net.embeds
+
+        pixelcnn = PixelCNN(0.1,global_step,1.0,
+                            3,embeds,20,32,
+                            True,10,20)
+
     init_op = tf.group(tf.global_variables_initializer(),
                     tf.local_variables_initializer())
 
@@ -168,5 +312,7 @@ if __name__ == "__main__":
     sess.graph.finalize()
     sess.run(init_op)
 
-    print(sess.run(net.train_op,feed_dict={x:np.random.random((10,32,32,3))}))
+    #print(sess.run(net.train_op,feed_dict={x:np.random.random((10,32,32,3))}))
+    sampled,log_prob = pixelcnn.sample_from_prior(sess,np.arange(10),1)
+    print(sampled[0], np.exp(log_prob[0]))
 

@@ -6,7 +6,7 @@ import tensorflow as tf
 import numpy as np
 from tqdm import tqdm
 
-from model import VQVAE, _cifar10_arch
+from model import VQVAE, _cifar10_arch, PixelCNN
 
 # The codes are borrowed from
 # https://github.com/tensorflow/models/blob/master/tutorials/image/cifar10/cifar10.py
@@ -62,7 +62,7 @@ def get_image(train=True,num_epochs=None):
         filenames = [os.path.join(DATA_DIR, 'cifar-10-batches-bin', 'test_batch.bin')]
     filename_queue = tf.train.string_input_producer(filenames,num_epochs=num_epochs)
     read_input = read_cifar10(filename_queue)
-    return tf.cast(read_input.uint8image, tf.float32) / 255.0
+    return tf.cast(read_input.uint8image, tf.float32) / 255.0, tf.reshape(read_input.label,[])
 
 
 def main(config,
@@ -78,19 +78,20 @@ def main(config,
          K,
          D,
          SAVE_PERIOD,
-         SUMMARY_PERIOD):
+         SUMMARY_PERIOD,
+         **kwargs):
     np.random.seed(RANDOM_SEED)
     tf.set_random_seed(RANDOM_SEED)
 
     # >>>>>>> DATASET
-    image = get_image()
+    image,_ = get_image()
     images = tf.train.shuffle_batch(
         [image],
         batch_size=BATCH_SIZE,
         num_threads=4,
         capacity=BATCH_SIZE*10,
         min_after_dequeue=BATCH_SIZE*2)
-    valid_image = get_image(False)
+    valid_image,_ = get_image(False)
     valid_images = tf.train.shuffle_batch(
         [valid_image],
         batch_size=BATCH_SIZE,
@@ -178,22 +179,20 @@ def main(config,
         coord.request_stop()
         coord.join(threads)
 
-    net.save(sess,LOG_DIR)
-
 def test(MODEL,
          BETA,
          K,
          D,
          **kwargs):
     # >>>>>>> DATASET
-    image = get_image(num_epochs=1)
+    image,_ = get_image(num_epochs=1)
     images = tf.train.batch(
         [image],
         batch_size=100,
         num_threads=1,
         capacity=100,
         allow_smaller_final_batch=True)
-    valid_image = get_image(False,num_epochs=1)
+    valid_image,_ = get_image(False,num_epochs=1)
     valid_images = tf.train.batch(
         [valid_image],
         batch_size=100,
@@ -248,11 +247,165 @@ def test(MODEL,
     coord.request_stop()
     coord.join(threads)
 
+def extract_z(MODEL,
+              BATCH_SIZE,
+              BETA,
+              K,
+              D,
+              **kwargs):
+    # >>>>>>> DATASET
+    image,label = get_image(num_epochs=1)
+    images,labels = tf.train.batch(
+        [image,label],
+        batch_size=BATCH_SIZE,
+        num_threads=1,
+        capacity=BATCH_SIZE,
+        allow_smaller_final_batch=True)
+    # <<<<<<<
+
+    # >>>>>>> MODEL
+    with tf.variable_scope('net'):
+        with tf.variable_scope('params') as params:
+            pass
+        x_ph = tf.placeholder(tf.float32,[None,32,32,3])
+        net= VQVAE(None,None,BETA,x_ph,K,D,_cifar10_arch,params,False)
+
+    init_op = tf.group(tf.global_variables_initializer(),
+                    tf.local_variables_initializer())
+
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Run!
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    sess = tf.Session(config=config)
+    sess.graph.finalize()
+    sess.run(init_op)
+    net.load(sess,MODEL)
+
+
+    coord = tf.train.Coordinator()
+    threads = tf.train.start_queue_runners(coord=coord,sess=sess)
+    try:
+        ks = []
+        ys = []
+        while not coord.should_stop():
+            x,y = sess.run([images,labels])
+            k = sess.run(net.k,feed_dict={x_ph:x})
+            ks.append(k)
+            ys.append(y)
+            print('.', end='', flush=True)
+    except tf.errors.OutOfRangeError:
+        print('Extracting Finished')
+
+    ks = np.concatenate(ks,axis=0)
+    ys = np.concatenate(ys,axis=0)
+    np.savez(os.path.join(os.path.dirname(MODEL),'ks_ys.npz'),ks=ks,ys=ys)
+
+    coord.request_stop()
+    coord.join(threads)
+
+def train_prior(config,
+                RANDOM_SEED,
+                MODEL,
+                TRAIN_NUM,
+                BATCH_SIZE,
+                LEARNING_RATE,
+                DECAY_VAL,
+                DECAY_STEPS,
+                DECAY_STAIRCASE,
+                GRAD_CLIP,
+                K,
+                D,
+                BETA,
+                NUM_LAYERS,
+                NUM_FEATURE_MAPS,
+                SUMMARY_PERIOD,
+                SAVE_PERIOD,
+                **kwargs):
+    np.random.seed(RANDOM_SEED)
+    tf.set_random_seed(RANDOM_SEED)
+    LOG_DIR = os.path.join(os.path.dirname(MODEL),'pixelcnn_6')
+    # >>>>>>> DATASET
+    class Latents():
+        def __init__(self,path,validation_size=1):
+            from tensorflow.contrib.learn.python.learn.datasets.mnist import DataSet
+            from tensorflow.contrib.learn.python.learn.datasets import base
+
+            data = np.load(path)
+            train = DataSet(data['ks'][validation_size:], data['ys'][validation_size:],reshape=False,dtype=np.uint8,one_hot=False) #dtype won't bother even in the case when latent is int32 type.
+            validation = DataSet(data['ks'][:validation_size], data['ys'][:validation_size],reshape=False,dtype=np.uint8,one_hot=False)
+            #test = DataSet(data['test_x'],np.argmax(data['test_y'],axis=1),reshape=False,dtype=np.float32,one_hot=False)
+            self.size = data['ks'].shape[1]
+            self.data = base.Datasets(train=train, validation=validation, test=None)
+    latent = Latents(os.path.join(os.path.dirname(MODEL),'ks_ys.npz'))
+    # <<<<<<<
+
+    # >>>>>>> MODEL for Generate Images
+    with tf.variable_scope('net'):
+        with tf.variable_scope('params') as params:
+            pass
+        _not_used = tf.placeholder(tf.float32,[None,32,32,3])
+        vq_net = VQVAE(None,None,BETA,_not_used,K,D,_cifar10_arch,params,False)
+    # <<<<<<<
+
+    # >>>>>> MODEL for Training Prior
+    with tf.variable_scope('pixelcnn'):
+        global_step = tf.Variable(0, trainable=False)
+        learning_rate = tf.train.exponential_decay(LEARNING_RATE, global_step, DECAY_STEPS, DECAY_VAL, staircase=DECAY_STAIRCASE) tf.summary.scalar('lr',learning_rate)
+
+        net = PixelCNN(learning_rate,global_step,GRAD_CLIP,
+                       latent.size,vq_net.embeds,K,D,
+                       10,NUM_LAYERS,NUM_FEATURE_MAPS)
+    # <<<<<<
+    with tf.variable_scope('misc'):
+        # Summary Operations
+        tf.summary.scalar('loss',net.loss)
+        summary_op = tf.summary.merge_all()
+
+        # Initialize op
+        init_op = tf.group(tf.global_variables_initializer(),
+                        tf.local_variables_initializer())
+        config_summary = tf.summary.text('TrainConfig', tf.convert_to_tensor(config.as_matrix()), collections=[])
+
+        sample_images = tf.placeholder(tf.float32,[None,32,32,3])
+        sample_summary_op = tf.summary.image('samples',sample_images,max_outputs=20)
+
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Run!
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    sess = tf.Session(config=config)
+    sess.graph.finalize()
+    sess.run(init_op)
+    vq_net.load(sess,MODEL)
+
+    summary_writer = tf.summary.FileWriter(LOG_DIR,sess.graph)
+    summary_writer.add_summary(config_summary.eval(session=sess))
+
+    for step in tqdm(xrange(TRAIN_NUM),dynamic_ncols=True):
+        batch_xs, batch_ys = latent.data.train.next_batch(BATCH_SIZE)
+        it,loss,_ = sess.run([global_step,net.loss,net.train_op],feed_dict={net.X:batch_xs,net.h:batch_ys})
+
+        if( it % SAVE_PERIOD == 0 ):
+            net.save(sess,LOG_DIR,step=it)
+
+        if( it % SUMMARY_PERIOD == 0 ):
+            tqdm.write('[%5d] Loss: %1.3f'%(it,loss))
+            summary = sess.run(summary_op,feed_dict={net.X:batch_xs,net.h:batch_ys})
+            summary_writer.add_summary(summary,it)
+
+        if( it % (SUMMARY_PERIOD * 2) == 0 ):
+            sampled_zs,log_probs = net.sample_from_prior(sess,np.arange(10),2)
+            sampled_ims = sess.run(vq_net.gen,feed_dict={vq_net.latent:sampled_zs})
+            summary_writer.add_summary(
+                sess.run(sample_summary_op,feed_dict={sample_images:sampled_ims}),it)
+
+    net.save(sess,LOG_DIR)
+
 def get_default_param():
     from datetime import datetime
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return {
         'LOG_DIR':'./log/cifar10/%s'%(now),
+        'MODEL' : './log/cifar10/%s/last.ckpt'%(now),
 
         'TRAIN_NUM' : 250000, #Size corresponds to one epoch
         'BATCH_SIZE': 128,
@@ -266,7 +419,12 @@ def get_default_param():
         'K':10,
         'D':256,
 
-        'SUMMARY_PERIOD' : 20,
+        # PixelCNN Params
+        'GRAD_CLIP' : 5.0,
+        'NUM_LAYERS' : 12,
+        'NUM_FEATURE_MAPS' : 64,
+
+        'SUMMARY_PERIOD' : 100,
         'SAVE_PERIOD' : 10000,
         'RANDOM_SEED': 0,
     }
@@ -281,4 +439,11 @@ if __name__ == "__main__":
     config.as_matrix = as_matrix
 
     main(config=config,**config)
+    extract_z(**config)
+    config['TRAIN_NUM'] = 300000
+    config['LEARNING_RATE'] = 0.001
+    config['DECAY_VAL'] = 0.5
+    config['DECAY_STEPS'] = 100000
+    train_prior(config=config,**config)
+
     #test(MODEL='models/cifar10/last.ckpt',**config)

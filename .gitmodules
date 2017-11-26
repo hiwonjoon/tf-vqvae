@@ -1,0 +1,6 @@
+[submodule "slim_models"]
+	path = slim_models
+	url = git@github.com:tensorflow/models.git
+[submodule "Conditional-PixelCNN-decoder"]
+	path = pixelcnn
+	url = git@github.com:anantzoid/Conditional-PixelCNN-decoder.git

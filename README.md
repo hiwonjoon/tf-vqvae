@@ -11,6 +11,23 @@ This repository implements the paper, [Neural Discrete Representation Learning](
 - Python 3.5
 - Tensorflow (v1.3 or higher)
 - numpy, better_exceptions, tqdm, etc.
+- ffmpeg
+
+## Updated Result: Sampling with PixelCNN
+
+- [x] Pixel CNN
+
+  - MNIST Sampled Image (Conditioned on class labels)
+
+    ![MNIST Sampled Images](/assets/sampled_mnist.png)
+
+  - Cifar10 Sampled Image (Conditioned on class labels)
+
+    ![Cifar10 Sampled Imagesl](/assets/sampled_cifar10.png)
+
+    From top row to bottom, the sampled images for classes (airplane,auto,bird,cat,deer,dog,frog,horse,ship,truck)
+
+    Not that satisfying so far; I guess hyperparameters for VQ-VAE should be tuned first to generate more sharper result.
 
 ## Results
 
@@ -66,7 +83,7 @@ If you want to test NLL, then run `test()` function on `cifar.py` by uncomment t
 
 ## TODO
 
-- [ ] PixelCNN?
+- [ ] ImageNet?
 - [ ] WaveNet?
 
 Contributions are welcome!
@@ -75,5 +92,7 @@ Contributions are welcome!
 
 - The results seems correct, but there is a chance that the implmentation is not perfectly correct (especially, gradient copying...). If you find any glitches (or, a major defect) then, please let me know!
 - I am currently not sure how exactly NLL should be computed. Anyone who wants me a proper explantion on this?
-- It is unclear from the paper how they leverage pertrained PixelCNN and WaveNet for prior(z). What does it mean?
 
+## Acknowledgement
+
+- The code for Pixel CNN is borrowed from [anantzoid's repo.](https://github.com/anantzoid/Conditional-PixelCNN-decoder)

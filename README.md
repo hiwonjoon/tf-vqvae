@@ -13,6 +13,33 @@ This repository implements the paper, [Neural Discrete Representation Learning](
 - numpy, better_exceptions, tqdm, etc.
 - ffmpeg
 
+## Updated Result: ImageNet
+
+- [x] ImageNet
+
+  | Validation Set Images | Reconstructed Images |
+  | ------------- |:-------------:|
+  |![Imagenet original images](/assets/imagenet_val_original.png) | ![Imagenet Reconstructed Images](/assets/imagenet_val_recon.png) |
+
+  - Class Conditioned Sampled Image (Not cherry-picked, just random sample)
+
+    ![alp](/assets/alp.png)
+
+    ![admiral](/assets/admiral.png)
+
+    ![coral reef](/assets/coral_reef.png)
+
+    ![gray_whale](/assets/gray_whale.png)
+
+    ![brown bear](/assets/brown_bear.png)
+
+    ![pickup truck](/assets/pickup.png)
+
+  - I could not reproduce as sharp images as the author produced.
+  - But, some of results seems understandable.
+  - Usually, natural scene images having consistent pixel orders shows better result, such as Alp or coral reef.
+  - More tuning might provide better result.
+
 ## Updated Result: Sampling with PixelCNN
 
 - [x] Pixel CNN
@@ -83,7 +110,6 @@ If you want to test NLL, then run `test()` function on `cifar.py` by uncomment t
 
 ## TODO
 
-- [ ] ImageNet?
 - [ ] WaveNet?
 
 Contributions are welcome!

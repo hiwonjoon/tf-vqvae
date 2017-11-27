@@ -350,7 +350,8 @@ def train_prior(config,
     # >>>>>> MODEL for Training Prior
     with tf.variable_scope('pixelcnn'):
         global_step = tf.Variable(0, trainable=False)
-        learning_rate = tf.train.exponential_decay(LEARNING_RATE, global_step, DECAY_STEPS, DECAY_VAL, staircase=DECAY_STAIRCASE) tf.summary.scalar('lr',learning_rate)
+        learning_rate = tf.train.exponential_decay(LEARNING_RATE, global_step, DECAY_STEPS, DECAY_VAL, staircase=DECAY_STAIRCASE)
+        tf.summary.scalar('lr',learning_rate)
 
         net = PixelCNN(learning_rate,global_step,GRAD_CLIP,
                        latent.size,vq_net.embeds,K,D,

@@ -112,9 +112,8 @@ class VQVAE():
             z_e = _t
 
             # Middle Area (Compression or Discretize)
-            # TODO: Gross.. use brodcast instead!
-            _t = tf.tile(tf.expand_dims(z_e,-2),[1,1,1,K,1]) #[batch,latent_h,latent_w,K,D]
-            _e = tf.reshape(embeds,[1,1,1,K,D])
+            _t = tf.expand_dims(z_e, axis=-2)
+            _e = embeds
             _t = tf.norm(_t-_e,axis=-1)
             k = tf.argmin(_t,axis=-1) # -> [latent_h,latent_w]
             z_q = tf.gather(embeds,k)
